@@ -1,4 +1,7 @@
+
 import os
+import threading
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -27,6 +30,11 @@ Vertical 4:5 composition.
 No face replacement, no facial redesign, no identity change, no altered facial proportions, no plastic skin, no excessive makeup, no cartoon style, no text, no logo, no watermark."""
 }
 
+app_web = Flask(__name__)
+
+@app_web.route("/")
+def home():
+    return "Bot is running!"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prompt_id = context.args[0] if context.args else "cinematic"
@@ -49,7 +57,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
 async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -66,9 +73,7 @@ async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prompt = PROMPTS.get(prompt_id)
 
             if not prompt:
-                await query.message.reply_text(
-                    "❌ این پرامپت پیدا نشد."
-                )
+                await query.message.reply_text("❌ این پرامپت پیدا نشد.")
                 return
 
             await query.message.reply_text(
@@ -77,7 +82,6 @@ async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"```text\n{prompt}\n```",
                 parse_mode="Markdown"
             )
-
         else:
             await query.answer(
                 "❌ هنوز عضو کانال نیستی!",
@@ -90,6 +94,9 @@ async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "مطمئن شو ربات در کانال ادمین است و دوباره امتحان کن."
         )
 
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app_web.run(host="0.0.0.0", port=port)
 
 def main():
     token = os.environ.get("BOT_TOKEN")
@@ -97,14 +104,20 @@ def main():
     if not token:
         raise RuntimeError("BOT_TOKEN is not configured.")
 
-    app = Application.builder().token(token).build()
+    bot_app = Application.builder().token(token).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(check_membership, pattern=r"^check:"))
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(
+        CallbackQueryHandler(
+            check_membership,
+            pattern=r"^check:"
+        )
+    )
+
+    threading.Thread(target=run_web, daemon=True).start()
 
     print("Bot is running...")
-    app.run_polling()
-
+    bot_app.run_polling()
 
 if __name__ == "__main__":
     main()
