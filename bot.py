@@ -1,7 +1,7 @@
 import os
 import threading
 
-from flask import Flask
+from flask import Flask, request
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -15,12 +15,24 @@ from telegram.ext import (
     ContextTypes
 )
 
+# =========================
+# CONFIG
+# =========================
+
 CHANNEL_USERNAME = "@HooshMasnoei_Tools"
 
+PORT = int(os.environ.get("PORT", 10000))
+RENDER_EXTERNAL_URL = os.environ.get(
+    "RENDER_EXTERNAL_URL",
+    "https://hooshmasnoeipromptbot.onrender.com"
+)
 
-# =========================================================
+WEBHOOK_PATH = "/telegram-webhook"
+
+
+# =========================
 # PROMPTS
-# =========================================================
+# =========================
 
 PROMPTS = {
     "cinematic": """Transform the subject in the reference image into an ultra-premium cinematic portrait.
@@ -46,30 +58,28 @@ No face replacement, no facial redesign, no identity change, no altered facial p
 }
 
 
-# =========================================================
-# WEB SERVER
-# =========================================================
+# =========================
+# FLASK
+# =========================
 
 app_web = Flask(__name__)
 
 
-@app_web.route("/")
+@app_web.route("/", methods=["GET", "HEAD"])
 def home():
-    return "Bot is running!"
+    return "Bot is running!", 200
 
 
-# =========================================================
-# USER MEMORY
-# =========================================================
-# Stores the last Prompt ID used by each Telegram user.
-# This is temporary memory and resets if the Render service restarts.
+# =========================
+# USER STATE
+# =========================
 
 LAST_PROMPT = {}
 
 
-# =========================================================
-# MEMBERSHIP CHECK
-# =========================================================
+# =========================
+# MEMBERSHIP
+# =========================
 
 async def is_user_member(context, user_id):
     try:
@@ -84,15 +94,17 @@ async def is_user_member(context, user_id):
             "creator"
         ]
 
-    except Exception:
+    except Exception as e:
+        print(f"Membership check error: {e}")
         return False
 
 
-# =========================================================
+# =========================
 # SEND PROMPT
-# =========================================================
+# =========================
 
 async def send_prompt(message, prompt_id):
+
     prompt = PROMPTS.get(prompt_id)
 
     if not prompt:
@@ -108,73 +120,97 @@ async def send_prompt(message, prompt_id):
     )
 
 
-# =========================================================
-# /START
-# =========================================================
+# =========================
+# START
+# =========================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not update.message:
+        return
 
     user_id = update.effective_user.id
 
-    # Prompt ID coming from Telegram deep link
-    prompt_id = context.args[0] if context.args else None
+    prompt_id = (
+        context.args[0]
+        if context.args
+        else None
+    )
 
-    # If user entered through a specific post
+    # -------------------------
+    # START WITH PROMPT ID
+    # -------------------------
+
     if prompt_id:
 
-        # Make sure this Prompt ID exists
         if prompt_id not in PROMPTS:
+
             await update.message.reply_text(
                 "❌ این پرامپت وجود ندارد یا لینک آن اشتباه است."
             )
+
             return
 
-        # Save last prompt for this user
         LAST_PROMPT[user_id] = prompt_id
 
-        # Check channel membership
         member = await is_user_member(
             context,
             user_id
         )
 
-        # Already member → send immediately
+        # USER IS MEMBER
         if member:
+
             await send_prompt(
                 update.message,
                 prompt_id
             )
+
             return
 
-        # Not a member → show membership buttons
+        # USER IS NOT MEMBER
+
         keyboard = [
+
             [
                 InlineKeyboardButton(
                     "🔵 عضویت در کانال",
                     url="https://t.me/HooshMasnoei_Tools"
                 )
             ],
+
             [
                 InlineKeyboardButton(
                     "✅ بررسی عضویت",
                     callback_data=f"check:{prompt_id}"
                 )
             ]
+
         ]
 
         await update.message.reply_text(
-            "🔐 برای دریافت این پرامپت، ابتدا عضو کانال ما شو:\n\n"
+
+            "🔐 برای دریافت این پرامپت، "
+            "ابتدا عضو کانال ما شو:\n\n"
+
             "🔵 @HooshMasnoei_Tools\n\n"
-            "بعد از عضویت، روی «✅ بررسی عضویت» بزن.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+
+            "بعد از عضویت، روی "
+            "«✅ بررسی عضویت» بزن.",
+
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            )
         )
 
         return
 
-
-    # =====================================================
-    # NORMAL /START
-    # =====================================================
+    # -------------------------
+    # NORMAL START
+    # -------------------------
 
     member = await is_user_member(
         context,
@@ -184,40 +220,58 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if member:
 
         await update.message.reply_text(
+
             "👋 سلام! خوش اومدی 🌟\n\n"
-            "از منوی ربات می‌تونی به امکانات مختلف دسترسی داشته باشی.\n\n"
-            "🎁 اگر قبلاً پرامپتی دریافت کردی، می‌تونی "
-            "از گزینه «دریافت مجدد پرامپت» دوباره دریافتش کنی."
+
+            "از منوی ربات می‌تونی "
+            "به امکانات مختلف دسترسی داشته باشی.\n\n"
+
+            "🎁 اگر قبلاً پرامپتی دریافت کردی، "
+            "می‌تونی از گزینه "
+            "«دریافت مجدد پرامپت» "
+            "دوباره دریافتش کنی."
         )
 
-    else:
+        return
 
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "🔵 عضویت در کانال",
-                    url="https://t.me/HooshMasnoei_Tools"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "✅ بررسی عضویت",
-                    callback_data="check:last"
-                )
-            ]
+    # NOT MEMBER
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "🔵 عضویت در کانال",
+                url="https://t.me/HooshMasnoei_Tools"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "✅ بررسی عضویت",
+                callback_data="check:last"
+            )
         ]
 
-        await update.message.reply_text(
-            "👋 سلام! خوش اومدی 🌟\n\n"
-            "🔐 برای استفاده از ربات ابتدا باید عضو کانال ما باشی:\n\n"
-            "🔵 @HooshMasnoei_Tools",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+    ]
+
+    await update.message.reply_text(
+
+        "👋 سلام! خوش اومدی 🌟\n\n"
+
+        "🔐 برای استفاده از ربات "
+        "ابتدا باید عضو کانال ما باشی:\n\n"
+
+        "🔵 @HooshMasnoei_Tools",
+
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
         )
+    )
 
 
-# =========================================================
-# MEMBERSHIP BUTTON
-# =========================================================
+# =========================
+# CHECK MEMBERSHIP
+# =========================
 
 async def check_membership(
     update: Update,
@@ -232,21 +286,35 @@ async def check_membership(
 
     data = query.data
 
-    prompt_id = data.split(":", 1)[1]
+    prompt_id = data.split(
+        ":",
+        1
+    )[1]
 
-    # If prompt ID is "last", use last prompt
+    # LAST PROMPT
+
     if prompt_id == "last":
 
-        prompt_id = LAST_PROMPT.get(user_id)
+        prompt_id = LAST_PROMPT.get(
+            user_id
+        )
 
         if not prompt_id:
+
             await query.message.reply_text(
-                "ℹ️ هنوز پرامپتی برای این کاربر ثبت نشده است.\n\n"
-                "برای دریافت یک پرامپت، از یکی از پست‌های کانال وارد ربات شو."
+
+                "ℹ️ هنوز پرامپتی برای این "
+                "کاربر ثبت نشده است.\n\n"
+
+                "برای دریافت یک پرامپت، "
+                "از یکی از پست‌های کانال "
+                "وارد ربات شو."
             )
+
             return
 
-    # Check membership
+    # CHECK MEMBER
+
     member = await is_user_member(
         context,
         user_id
@@ -261,67 +329,90 @@ async def check_membership(
 
         return
 
-    # Save Prompt ID
+    # SAVE LAST PROMPT
+
     LAST_PROMPT[user_id] = prompt_id
 
-    # Send prompt
+    # SEND PROMPT
+
     await send_prompt(
         query.message,
         prompt_id
     )
 
 
-# =========================================================
-# REPEAT LAST PROMPT
-# =========================================================
+# =========================
+# REPEAT PROMPT
+# =========================
 
 async def repeat_prompt(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    if not update.message:
+        return
+
     user_id = update.effective_user.id
 
-    # Check membership first
     member = await is_user_member(
         context,
         user_id
     )
 
+    # NOT MEMBER
+
     if not member:
 
         keyboard = [
+
             [
                 InlineKeyboardButton(
                     "🔵 عضویت در کانال",
                     url="https://t.me/HooshMasnoei_Tools"
                 )
             ],
+
             [
                 InlineKeyboardButton(
                     "✅ بررسی عضویت",
                     callback_data="check:last"
                 )
             ]
+
         ]
 
         await update.message.reply_text(
-            "🔐 برای استفاده از این قابلیت ابتدا عضو کانال شو.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+
+            "🔐 برای استفاده از این "
+            "قابلیت ابتدا عضو کانال شو.",
+
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            )
         )
 
         return
 
-    prompt_id = LAST_PROMPT.get(user_id)
+    # GET LAST PROMPT
+
+    prompt_id = LAST_PROMPT.get(
+        user_id
+    )
 
     if not prompt_id:
 
         await update.message.reply_text(
+
             "ℹ️ هنوز پرامپتی دریافت نکردی.\n\n"
-            "از یکی از پست‌های کانال روی «🎁 دریافت پرامپت» بزن."
+
+            "از یکی از پست‌های کانال روی "
+            "«🎁 دریافت پرامپت» بزن."
         )
 
         return
+
+    # SEND
 
     await send_prompt(
         update.message,
@@ -329,125 +420,215 @@ async def repeat_prompt(
     )
 
 
-# =========================================================
+# =========================
 # HELP
-# =========================================================
+# =========================
 
 async def help_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    if not update.message:
+        return
+
     await update.message.reply_text(
+
         "ℹ️ راهنمای ربات\n\n"
-        "🎁 برای دریافت پرامپت، از پست‌های کانال روی "
+
+        "🎁 برای دریافت پرامپت، "
+        "از پست‌های کانال روی "
         "«دریافت پرامپت» بزن.\n\n"
-        "🔄 اگر قبلاً پرامپتی دریافت کرده‌ای، از گزینه "
+
+        "🔄 اگر قبلاً پرامپتی دریافت کرده‌ای، "
+        "از گزینه "
         "«دریافت مجدد پرامپت» استفاده کن.\n\n"
+
         "🤖 @HooshMasnoeiPromptBot"
     )
 
 
-# =========================================================
-# SET BOT MENU
-# =========================================================
+# =========================
+# BOT COMMANDS
+# =========================
 
 async def post_init(application):
 
     await application.bot.set_my_commands([
-        BotCommand("start", "🏠 شروع"),
-        BotCommand("prompt", "🎁 دریافت مجدد پرامپت"),
-        BotCommand("help", "ℹ️ راهنما")
+
+        BotCommand(
+            "start",
+            "🏠 شروع"
+        ),
+
+        BotCommand(
+            "prompt",
+            "🎁 دریافت مجدد پرامپت"
+        ),
+
+        BotCommand(
+            "help",
+            "ℹ️ راهنما"
+        )
+
     ])
 
 
-# =========================================================
-# WEB SERVER THREAD
-# =========================================================
+# =========================
+# CREATE APPLICATION
+# =========================
 
-def run_web():
+TOKEN = os.environ.get(
+    "BOT_TOKEN"
+)
 
-    port = int(
-        os.environ.get(
-            "PORT",
-            10000
+if not TOKEN:
+
+    raise RuntimeError(
+        "BOT_TOKEN is not configured."
+    )
+
+
+bot_app = (
+    Application
+    .builder()
+    .token(TOKEN)
+    .post_init(post_init)
+    .build()
+)
+
+
+# =========================
+# HANDLERS
+# =========================
+
+bot_app.add_handler(
+    CommandHandler(
+        "start",
+        start
+    )
+)
+
+bot_app.add_handler(
+    CommandHandler(
+        "prompt",
+        repeat_prompt
+    )
+)
+
+bot_app.add_handler(
+    CommandHandler(
+        "help",
+        help_command
+    )
+)
+
+bot_app.add_handler(
+    CallbackQueryHandler(
+        check_membership,
+        pattern=r"^check:"
+    )
+)
+
+
+# =========================
+# WEBHOOK
+# =========================
+
+@app_web.route(
+    WEBHOOK_PATH,
+    methods=["POST"]
+)
+def telegram_webhook():
+
+    try:
+
+        update_data = request.get_json(
+            force=True
         )
-    )
 
-    app_web.run(
-        host="0.0.0.0",
-        port=port
-    )
-
-
-# =========================================================
-# MAIN
-# =========================================================
-
-def main():
-
-    token = os.environ.get(
-        "BOT_TOKEN"
-    )
-
-    if not token:
-
-        raise RuntimeError(
-            "BOT_TOKEN is not configured."
+        update = Update.de_json(
+            update_data,
+            bot_app.bot
         )
 
-    bot_app = (
-        Application
-        .builder()
-        .token(token)
-        .post_init(post_init)
-        .build()
-    )
-
-    # /start
-    bot_app.add_handler(
-        CommandHandler(
-            "start",
-            start
+        # Process update asynchronously
+        bot_app.update_queue.put_nowait(
+            update
         )
-    )
 
-    # /prompt
-    bot_app.add_handler(
-        CommandHandler(
-            "prompt",
-            repeat_prompt
+        return "OK", 200
+
+    except Exception as e:
+
+        print(
+            f"Webhook error: {e}"
         )
-    )
 
-    # /help
-    bot_app.add_handler(
-        CommandHandler(
-            "help",
-            help_command
-        )
-    )
+        return "ERROR", 500
 
-    # Membership buttons
-    bot_app.add_handler(
-        CallbackQueryHandler(
-            check_membership,
-            pattern=r"^check:"
-        )
-    )
 
-    # Start Flask
-    threading.Thread(
-        target=run_web,
-        daemon=True
-    ).start()
+# =========================
+# SET WEBHOOK
+# =========================
+
+async def setup_webhook():
+
+    webhook_url = (
+        RENDER_EXTERNAL_URL.rstrip("/")
+        + WEBHOOK_PATH
+    )
 
     print(
-        "Bot is running..."
+        f"Setting webhook: {webhook_url}"
     )
 
-    bot_app.run_polling()
+    await bot_app.bot.set_webhook(
+        url=webhook_url,
+        drop_pending_updates=True
+    )
 
+    print(
+        "Webhook successfully configured."
+    )
+
+
+# =========================
+# START BOT
+# =========================
+
+def run_bot():
+
+    import asyncio
+
+    async def runner():
+
+        await bot_app.initialize()
+
+        await bot_app.start()
+
+        await setup_webhook()
+
+    asyncio.run(
+        runner()
+    )
+
+
+# =========================
+# START
+# =========================
 
 if __name__ == "__main__":
-    main()
+
+    print(
+        "Starting Telegram bot..."
+    )
+
+    # Start Telegram application
+    run_bot()
+
+    # Start Flask web server
+    app_web.run(
+        host="0.0.0.0",
+        port=PORT
+    )
