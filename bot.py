@@ -1,4 +1,3 @@
-
 import os
 import threading
 from flask import Flask
@@ -30,24 +29,76 @@ Vertical 4:5 composition.
 No face replacement, no facial redesign, no identity change, no altered facial proportions, no plastic skin, no excessive makeup, no cartoon style, no text, no logo, no watermark."""
 }
 
+
 app_web = Flask(__name__)
+
 
 @app_web.route("/")
 def home():
     return "Bot is running!"
 
+
+async def send_prompt(update: Update, prompt_id: str):
+    prompt = PROMPTS.get(prompt_id)
+
+    if not prompt:
+        await update.effective_message.reply_text(
+            "❌ این پرامپت پیدا نشد."
+        )
+        return
+
+    await update.effective_message.reply_text(
+        "🎉 عضویتت تأیید شد!\n\n"
+        "🎁 پرامپت شما:\n\n"
+        f"```text\n{prompt}\n```",
+        parse_mode="Markdown"
+    )
+
+
+async def check_user_membership(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    member = await context.bot.get_chat_member(
+        chat_id=CHANNEL_USERNAME,
+        user_id=user_id
+    )
+
+    return member.status in [
+        "member",
+        "administrator",
+        "creator"
+    ]
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prompt_id = context.args[0] if context.args else "cinematic"
 
+    try:
+        is_member = await check_user_membership(
+            context,
+            update.effective_user.id
+        )
+
+        # اگر کاربر عضو است، مستقیماً پرامپت را بفرست
+        if is_member:
+            await send_prompt(update, prompt_id)
+            return
+
+    except Exception:
+        pass
+
+    # اگر عضو نیست، صفحه عضویت را نشان بده
     keyboard = [
-        [InlineKeyboardButton(
-            "🔵 عضویت در کانال",
-            url="https://t.me/HooshMasnoei_Tools"
-        )],
-        [InlineKeyboardButton(
-            "✅ بررسی عضویت",
-            callback_data=f"check:{prompt_id}"
-        )]
+        [
+            InlineKeyboardButton(
+                "🔵 عضویت در کانال",
+                url="https://t.me/HooshMasnoei_Tools"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "✅ بررسی عضویت",
+                callback_data=f"check:{prompt_id}"
+            )
+        ]
     ]
 
     await update.message.reply_text(
@@ -57,31 +108,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+
 async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+
     await query.answer()
 
     prompt_id = query.data.split(":", 1)[1]
 
     try:
-        member = await context.bot.get_chat_member(
-            chat_id=CHANNEL_USERNAME,
-            user_id=query.from_user.id
+        is_member = await check_user_membership(
+            context,
+            query.from_user.id
         )
 
-        if member.status in ["member", "administrator", "creator"]:
+        if is_member:
             prompt = PROMPTS.get(prompt_id)
 
             if not prompt:
-                await query.message.reply_text("❌ این پرامپت پیدا نشد.")
+                await query.message.reply_text(
+                    "❌ این پرامپت پیدا نشد."
+                )
                 return
 
             await query.message.reply_text(
                 "🎉 عضویتت تأیید شد!\n\n"
-                "🎁 این هم پرامپت:\n\n"
+                "🎁 پرامپت شما:\n\n"
                 f"```text\n{prompt}\n```",
                 parse_mode="Markdown"
             )
+
         else:
             await query.answer(
                 "❌ هنوز عضو کانال نیستی!",
@@ -90,13 +146,19 @@ async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception:
         await query.message.reply_text(
-            "⚠️ در بررسی عضویت مشکلی پیش آمد. "
-            "مطمئن شو ربات در کانال ادمین است و دوباره امتحان کن."
+            "⚠️ در بررسی عضویت مشکلی پیش آمد.\n"
+            "لطفاً مطمئن شو ربات در کانال ادمین است و دوباره امتحان کن."
         )
+
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
-    app_web.run(host="0.0.0.0", port=port)
+
+    app_web.run(
+        host="0.0.0.0",
+        port=port
+    )
+
 
 def main():
     token = os.environ.get("BOT_TOKEN")
@@ -106,7 +168,10 @@ def main():
 
     bot_app = Application.builder().token(token).build()
 
-    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(
+        CommandHandler("start", start)
+    )
+
     bot_app.add_handler(
         CallbackQueryHandler(
             check_membership,
@@ -114,10 +179,15 @@ def main():
         )
     )
 
-    threading.Thread(target=run_web, daemon=True).start()
+    threading.Thread(
+        target=run_web,
+        daemon=True
+    ).start()
 
     print("Bot is running...")
+
     bot_app.run_polling()
+
 
 if __name__ == "__main__":
     main()
