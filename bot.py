@@ -1,10 +1,26 @@
 import os
 import threading
+
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    BotCommand
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
 
 CHANNEL_USERNAME = "@HooshMasnoei_Tools"
+
+
+# =========================================================
+# PROMPTS
+# =========================================================
 
 PROMPTS = {
     "cinematic": """Transform the subject in the reference image into an ultra-premium cinematic portrait.
@@ -30,6 +46,10 @@ No face replacement, no facial redesign, no identity change, no altered facial p
 }
 
 
+# =========================================================
+# WEB SERVER
+# =========================================================
+
 app_web = Flask(__name__)
 
 
@@ -38,121 +58,321 @@ def home():
     return "Bot is running!"
 
 
-async def send_prompt(update: Update, prompt_id: str):
+# =========================================================
+# USER MEMORY
+# =========================================================
+# Stores the last Prompt ID used by each Telegram user.
+# This is temporary memory and resets if the Render service restarts.
+
+LAST_PROMPT = {}
+
+
+# =========================================================
+# MEMBERSHIP CHECK
+# =========================================================
+
+async def is_user_member(context, user_id):
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id=CHANNEL_USERNAME,
+            user_id=user_id
+        )
+
+        return member.status in [
+            "member",
+            "administrator",
+            "creator"
+        ]
+
+    except Exception:
+        return False
+
+
+# =========================================================
+# SEND PROMPT
+# =========================================================
+
+async def send_prompt(message, prompt_id):
     prompt = PROMPTS.get(prompt_id)
 
     if not prompt:
-        await update.effective_message.reply_text(
+        await message.reply_text(
             "❌ این پرامپت پیدا نشد."
         )
         return
 
-    await update.effective_message.reply_text(
-        "🎉 عضویتت تأیید شد!\n\n"
+    await message.reply_text(
         "🎁 پرامپت شما:\n\n"
         f"```text\n{prompt}\n```",
         parse_mode="Markdown"
     )
 
 
-async def check_user_membership(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    member = await context.bot.get_chat_member(
-        chat_id=CHANNEL_USERNAME,
-        user_id=user_id
-    )
-
-    return member.status in [
-        "member",
-        "administrator",
-        "creator"
-    ]
-
+# =========================================================
+# /START
+# =========================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    prompt_id = context.args[0] if context.args else "cinematic"
 
-    try:
-        is_member = await check_user_membership(
-            context,
-            update.effective_user.id
-        )
+    user_id = update.effective_user.id
 
-        # اگر کاربر عضو است، مستقیماً پرامپت را بفرست
-        if is_member:
-            await send_prompt(update, prompt_id)
+    # Prompt ID coming from Telegram deep link
+    prompt_id = context.args[0] if context.args else None
+
+    # If user entered through a specific post
+    if prompt_id:
+
+        # Make sure this Prompt ID exists
+        if prompt_id not in PROMPTS:
+            await update.message.reply_text(
+                "❌ این پرامپت وجود ندارد یا لینک آن اشتباه است."
+            )
             return
 
-    except Exception:
-        pass
+        # Save last prompt for this user
+        LAST_PROMPT[user_id] = prompt_id
 
-    # اگر عضو نیست، صفحه عضویت را نشان بده
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🔵 عضویت در کانال",
-                url="https://t.me/HooshMasnoei_Tools"
+        # Check channel membership
+        member = await is_user_member(
+            context,
+            user_id
+        )
+
+        # Already member → send immediately
+        if member:
+            await send_prompt(
+                update.message,
+                prompt_id
             )
-        ],
-        [
-            InlineKeyboardButton(
-                "✅ بررسی عضویت",
-                callback_data=f"check:{prompt_id}"
-            )
+            return
+
+        # Not a member → show membership buttons
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔵 عضویت در کانال",
+                    url="https://t.me/HooshMasnoei_Tools"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✅ بررسی عضویت",
+                    callback_data=f"check:{prompt_id}"
+                )
+            ]
         ]
-    ]
 
-    await update.message.reply_text(
-        "🔐 برای دریافت پرامپت، ابتدا عضو کانال ما شو:\n\n"
-        "🔵 @HooshMasnoei_Tools\n\n"
-        "بعد از عضویت، روی «✅ بررسی عضویت» بزن.",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "🔐 برای دریافت این پرامپت، ابتدا عضو کانال ما شو:\n\n"
+            "🔵 @HooshMasnoei_Tools\n\n"
+            "بعد از عضویت، روی «✅ بررسی عضویت» بزن.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+
+    # =====================================================
+    # NORMAL /START
+    # =====================================================
+
+    member = await is_user_member(
+        context,
+        user_id
     )
 
+    if member:
 
-async def check_membership(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text(
+            "👋 سلام! خوش اومدی 🌟\n\n"
+            "از منوی ربات می‌تونی به امکانات مختلف دسترسی داشته باشی.\n\n"
+            "🎁 اگر قبلاً پرامپتی دریافت کردی، می‌تونی "
+            "از گزینه «دریافت مجدد پرامپت» دوباره دریافتش کنی."
+        )
+
+    else:
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔵 عضویت در کانال",
+                    url="https://t.me/HooshMasnoei_Tools"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✅ بررسی عضویت",
+                    callback_data="check:last"
+                )
+            ]
+        ]
+
+        await update.message.reply_text(
+            "👋 سلام! خوش اومدی 🌟\n\n"
+            "🔐 برای استفاده از ربات ابتدا باید عضو کانال ما باشی:\n\n"
+            "🔵 @HooshMasnoei_Tools",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+
+# =========================================================
+# MEMBERSHIP BUTTON
+# =========================================================
+
+async def check_membership(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
     query = update.callback_query
 
     await query.answer()
 
-    prompt_id = query.data.split(":", 1)[1]
+    user_id = query.from_user.id
 
-    try:
-        is_member = await check_user_membership(
-            context,
-            query.from_user.id
-        )
+    data = query.data
 
-        if is_member:
-            prompt = PROMPTS.get(prompt_id)
+    prompt_id = data.split(":", 1)[1]
 
-            if not prompt:
-                await query.message.reply_text(
-                    "❌ این پرامپت پیدا نشد."
-                )
-                return
+    # If prompt ID is "last", use last prompt
+    if prompt_id == "last":
 
+        prompt_id = LAST_PROMPT.get(user_id)
+
+        if not prompt_id:
             await query.message.reply_text(
-                "🎉 عضویتت تأیید شد!\n\n"
-                "🎁 پرامپت شما:\n\n"
-                f"```text\n{prompt}\n```",
-                parse_mode="Markdown"
+                "ℹ️ هنوز پرامپتی برای این کاربر ثبت نشده است.\n\n"
+                "برای دریافت یک پرامپت، از یکی از پست‌های کانال وارد ربات شو."
             )
+            return
 
-        else:
-            await query.answer(
-                "❌ هنوز عضو کانال نیستی!",
-                show_alert=True
-            )
+    # Check membership
+    member = await is_user_member(
+        context,
+        user_id
+    )
 
-    except Exception:
-        await query.message.reply_text(
-            "⚠️ در بررسی عضویت مشکلی پیش آمد.\n"
-            "لطفاً مطمئن شو ربات در کانال ادمین است و دوباره امتحان کن."
+    if not member:
+
+        await query.answer(
+            "❌ هنوز عضو کانال نیستی!",
+            show_alert=True
         )
 
+        return
+
+    # Save Prompt ID
+    LAST_PROMPT[user_id] = prompt_id
+
+    # Send prompt
+    await send_prompt(
+        query.message,
+        prompt_id
+    )
+
+
+# =========================================================
+# REPEAT LAST PROMPT
+# =========================================================
+
+async def repeat_prompt(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    user_id = update.effective_user.id
+
+    # Check membership first
+    member = await is_user_member(
+        context,
+        user_id
+    )
+
+    if not member:
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔵 عضویت در کانال",
+                    url="https://t.me/HooshMasnoei_Tools"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✅ بررسی عضویت",
+                    callback_data="check:last"
+                )
+            ]
+        ]
+
+        await update.message.reply_text(
+            "🔐 برای استفاده از این قابلیت ابتدا عضو کانال شو.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+    prompt_id = LAST_PROMPT.get(user_id)
+
+    if not prompt_id:
+
+        await update.message.reply_text(
+            "ℹ️ هنوز پرامپتی دریافت نکردی.\n\n"
+            "از یکی از پست‌های کانال روی «🎁 دریافت پرامپت» بزن."
+        )
+
+        return
+
+    await send_prompt(
+        update.message,
+        prompt_id
+    )
+
+
+# =========================================================
+# HELP
+# =========================================================
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    await update.message.reply_text(
+        "ℹ️ راهنمای ربات\n\n"
+        "🎁 برای دریافت پرامپت، از پست‌های کانال روی "
+        "«دریافت پرامپت» بزن.\n\n"
+        "🔄 اگر قبلاً پرامپتی دریافت کرده‌ای، از گزینه "
+        "«دریافت مجدد پرامپت» استفاده کن.\n\n"
+        "🤖 @HooshMasnoeiPromptBot"
+    )
+
+
+# =========================================================
+# SET BOT MENU
+# =========================================================
+
+async def post_init(application):
+
+    await application.bot.set_my_commands([
+        BotCommand("start", "🏠 شروع"),
+        BotCommand("prompt", "🎁 دریافت مجدد پرامپت"),
+        BotCommand("help", "ℹ️ راهنما")
+    ])
+
+
+# =========================================================
+# WEB SERVER THREAD
+# =========================================================
 
 def run_web():
-    port = int(os.environ.get("PORT", 10000))
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            10000
+        )
+    )
 
     app_web.run(
         host="0.0.0.0",
@@ -160,18 +380,55 @@ def run_web():
     )
 
 
+# =========================================================
+# MAIN
+# =========================================================
+
 def main():
-    token = os.environ.get("BOT_TOKEN")
 
-    if not token:
-        raise RuntimeError("BOT_TOKEN is not configured.")
-
-    bot_app = Application.builder().token(token).build()
-
-    bot_app.add_handler(
-        CommandHandler("start", start)
+    token = os.environ.get(
+        "BOT_TOKEN"
     )
 
+    if not token:
+
+        raise RuntimeError(
+            "BOT_TOKEN is not configured."
+        )
+
+    bot_app = (
+        Application
+        .builder()
+        .token(token)
+        .post_init(post_init)
+        .build()
+    )
+
+    # /start
+    bot_app.add_handler(
+        CommandHandler(
+            "start",
+            start
+        )
+    )
+
+    # /prompt
+    bot_app.add_handler(
+        CommandHandler(
+            "prompt",
+            repeat_prompt
+        )
+    )
+
+    # /help
+    bot_app.add_handler(
+        CommandHandler(
+            "help",
+            help_command
+        )
+    )
+
+    # Membership buttons
     bot_app.add_handler(
         CallbackQueryHandler(
             check_membership,
@@ -179,12 +436,15 @@ def main():
         )
     )
 
+    # Start Flask
     threading.Thread(
         target=run_web,
         daemon=True
     ).start()
 
-    print("Bot is running...")
+    print(
+        "Bot is running..."
+    )
 
     bot_app.run_polling()
 
