@@ -1,122 +1,222 @@
 import os
 import asyncio
 import threading
-import time
 
 from flask import Flask, request
 
-from supabase import create_client, Client
-
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    BotCommand
-)
-
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes
+    ContextTypes,
 )
 
 
-# =========================================================
+# =========================
 # CONFIG
-# =========================================================
+# =========================
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 CHANNEL_USERNAME = "@HooshMasnoei_Tools"
 
-PORT = int(os.environ.get("PORT", 10000))
+PORT = int(os.getenv("PORT", "10000"))
 
-RENDER_EXTERNAL_URL = os.environ.get(
+RENDER_EXTERNAL_URL = os.getenv(
     "RENDER_EXTERNAL_URL",
     "https://hooshmasnoeipromptbot.onrender.com"
 )
 
 WEBHOOK_PATH = "/telegram-webhook"
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
-
-
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN is not configured.")
-
-if not SUPABASE_URL:
-    raise RuntimeError("SUPABASE_URL is not configured.")
-
-if not SUPABASE_SECRET_KEY:
-    raise RuntimeError("SUPABASE_SECRET_KEY is not configured.")
+    raise RuntimeError("BOT_TOKEN is not set")
 
 
-# =========================================================
-# SUPABASE
-# =========================================================
+# =========================
+# PROMPTS
+# =========================
 
-supabase: Client = create_client(
-    SUPABASE_URL,
-    SUPABASE_SECRET_KEY
-)
+PROMPTS = {
+
+    "cinematic": """
+Transform the subject in the reference image into an ultra-premium cinematic portrait.
+
+Keep the EXACT SAME person and preserve their identity completely:
+same face, eyes, nose, lips, jawline, facial proportions, hairstyle, skin tone, age, body proportions and all recognizable features.
+
+Do NOT generate a different person or change the person's identity.
+
+Turn the ordinary smartphone photo into a stunning cinematic movie-style portrait.
+
+Use dramatic cinematic lighting, soft rim light, subtle blue highlights, realistic skin texture, natural facial details, sophisticated cinematic color grading, shallow depth of field, beautiful bokeh, realistic shadows, subtle film grain, and a premium Hollywood movie aesthetic.
+
+Professional 85mm lens photography, realistic depth of field, high dynamic range, photorealistic, extremely detailed.
+
+Keep the same general pose, facial expression and camera angle while dramatically upgrading the lighting, environment and photographic quality.
+
+Create an elegant dark cinematic background with subtle atmospheric depth and a sophisticated, luxurious visual mood.
+
+Vertical 4:5 composition.
+
+No face replacement, no facial redesign, no identity change, no altered facial proportions, no plastic skin, no excessive makeup, no cartoon style, no text, no logo, no watermark.
+""",
+
+    "product": """
+Transform the provided product photo into an ultra-premium commercial advertising image suitable for a high-end brand campaign.
+
+PRODUCT PRESERVATION — ABSOLUTE PRIORITY:
+
+Keep the EXACT SAME PRODUCT from the reference image.
+
+Preserve its exact shape, proportions, dimensions, geometry, materials, texture, colors, surface details, buttons, ports, stitching, edges, branding and every recognizable physical characteristic.
+
+Do NOT redesign, reshape, resize, replace, simplify or modify the product in any way.
+
+Do NOT invent missing details or add features that are not present in the original product.
+
+The product must remain physically accurate and immediately recognizable as the exact same item.
+
+COMMERCIAL PHOTOGRAPHY:
+
+Transform the ordinary product photo into a sophisticated premium advertising photograph.
+
+Create professional studio-quality lighting with a soft directional key light, subtle fill light, controlled rim lighting, realistic reflections and naturally diffused shadows.
+
+Use physically accurate lighting and materials with realistic highlights, reflections and surface textures.
+
+Create a refined luxury advertising atmosphere inspired by premium global product campaigns.
+
+COMPOSITION:
+
+Make the product the clear hero subject.
+
+Use a carefully balanced commercial composition with strong visual hierarchy, clean negative space and elegant framing.
+
+Place the product naturally within a sophisticated environment without allowing the background or decorative elements to distract from it.
+
+Create realistic depth and dimensionality while maintaining the exact scale and proportions of the product.
+
+BACKGROUND:
+
+Create a premium, elegant and visually sophisticated background that complements the product.
+
+Use subtle gradients, realistic surfaces, atmospheric depth and carefully controlled environmental details.
+
+The background should feel luxurious and intentional rather than generic or artificial.
+
+Choose the environment and background style based on the product category while keeping the product as the primary focus.
+
+CAMERA & QUALITY:
+
+Professional commercial product photography.
+
+High-end studio camera look.
+
+85mm lens aesthetic.
+
+Natural depth of field.
+
+High dynamic range.
+
+Extremely detailed textures.
+
+Sharp focus on the product.
+
+Realistic optical characteristics.
+
+Physically accurate shadows and reflections.
+
+Photorealistic rendering.
+
+Premium cinematic color grading.
+
+SUBTLE ENHANCEMENT:
+
+Improve the overall photographic quality, lighting, atmosphere and presentation dramatically while keeping the actual product completely unchanged.
+
+The final image should look like it was photographed for a premium international advertising campaign.
+
+FORMAT:
+
+Vertical 4:5 composition optimized for Instagram, social media and online product presentation.
+
+NEGATIVE CONSTRAINTS:
+
+No product redesign.
+No altered proportions.
+No geometry distortion.
+No shape changes.
+No color changes.
+No fake materials.
+No invented features.
+No replacement product.
+No fake branding.
+No altered logo.
+No distorted text on the product.
+No unnecessary props touching the product.
+No excessive reflections.
+No unrealistic shadows.
+No plastic-looking surfaces.
+No cartoon style.
+No illustration.
+No CGI appearance.
+No text.
+No captions.
+No watermark.
+"""
+}
 
 
-# =========================================================
+# =========================
 # FLASK
-# =========================================================
+# =========================
 
-app_web = Flask(__name__)
+app = Flask(__name__)
 
 
-@app_web.route("/", methods=["GET", "HEAD"])
+@app.route("/", methods=["GET"])
 def home():
-    return "Bot is running!", 200
+    return "HooshMasnoei Prompt Bot is running."
 
 
-# =========================================================
+@app.route(WEBHOOK_PATH, methods=["POST"])
+def telegram_webhook():
+    try:
+        update = Update.de_json(
+            request.get_json(force=True),
+            bot_app.bot
+        )
+
+        asyncio.run_coroutine_threadsafe(
+            bot_app.process_update(update),
+            loop
+        )
+
+        return "OK", 200
+
+    except Exception as e:
+        print("Webhook error:", e)
+        return "ERROR", 500
+
+
+# =========================
 # USER STATE
-# =========================================================
+# =========================
 
 LAST_PROMPT = {}
 
 
-# =========================================================
-# GET PROMPT FROM SUPABASE
-# =========================================================
+# =========================
+# MEMBERSHIP CHECK
+# =========================
 
-def get_prompt(prompt_id):
+async def is_user_member(user_id: int) -> bool:
     try:
-        response = (
-            supabase
-            .table("prompts")
-            .select("id, prompt, title")
-            .eq("id", prompt_id)
-            .limit(1)
-            .execute()
-        )
-
-        if not response.data:
-            print(f"Prompt not found in Supabase: {prompt_id}")
-            return None
-
-        return response.data[0]
-
-    except Exception as e:
-        print(f"Supabase prompt error: {e}")
-        return None
-
-
-# =========================================================
-# MEMBERSHIP
-# =========================================================
-
-async def is_user_member(context, user_id):
-    try:
-        member = await context.bot.get_chat_member(
-            chat_id=CHANNEL_USERNAME,
-            user_id=user_id
+        member = await bot_app.bot.get_chat_member(
+            CHANNEL_USERNAME,
+            user_id
         )
 
         return member.status in [
@@ -126,80 +226,29 @@ async def is_user_member(context, user_id):
         ]
 
     except Exception as e:
-        print(f"Membership check error: {e}")
+        print("Membership check error:", e)
         return False
 
 
-# =========================================================
+# =========================
 # SEND PROMPT
-# =========================================================
+# =========================
 
-async def send_prompt(message, prompt_id):
+async def send_prompt(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    prompt_id: str
+):
 
-    prompt_data = get_prompt(prompt_id)
-
-    if not prompt_data:
-        await message.reply_text(
-            "❌ این پرامپت پیدا نشد."
+    if prompt_id not in PROMPTS:
+        await update.message.reply_text(
+            "❌ این پرامپت وجود ندارد یا لینک آن اشتباه است."
         )
-        return
-
-    prompt = prompt_data["prompt"]
-    title = prompt_data.get("title") or "پرامپت"
-
-    await message.reply_text(
-        f"🎁 {title}\n\n"
-        f"```text\n{prompt}\n```",
-        parse_mode="Markdown"
-    )
-
-
-# =========================================================
-# START
-# =========================================================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not update.message:
         return
 
     user_id = update.effective_user.id
-    prompt_id = context.args[0] if context.args else None
 
-    print(
-        f"START received | "
-        f"user={user_id} | "
-        f"prompt={prompt_id}"
-    )
-
-    # -----------------------------------------------------
-    # START WITH PROMPT ID
-    # -----------------------------------------------------
-
-    if prompt_id:
-
-        # بررسی وجود پرامپت در Supabase
-        prompt_data = get_prompt(prompt_id)
-
-        if not prompt_data:
-            await update.message.reply_text(
-                "❌ این پرامپت وجود ندارد یا لینک آن اشتباه است."
-            )
-            return
-
-        LAST_PROMPT[user_id] = prompt_id
-
-        member = await is_user_member(
-            context,
-            user_id
-        )
-
-        if member:
-            await send_prompt(
-                update.message,
-                prompt_id
-            )
-            return
+    if not await is_user_member(user_id):
 
         keyboard = [
             [
@@ -217,63 +266,124 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         await update.message.reply_text(
-            "🔐 برای دریافت این پرامپت، ابتدا عضو کانال ما شو:\n\n"
-            "🔵 @HooshMasnoei_Tools\n\n"
-            "بعد از عضویت، روی «✅ بررسی عضویت» بزن.",
+            "🔒 برای دریافت پرامپت ابتدا در کانال ما عضو شوید.",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         return
 
-    # -----------------------------------------------------
-    # NORMAL START
-    # -----------------------------------------------------
+    LAST_PROMPT[user_id] = prompt_id
 
-    member = await is_user_member(
-        context,
-        user_id
+    await update.message.reply_text(
+        "🎁 پرامپت کامل شما:\n\n"
+        + PROMPTS[prompt_id].strip()
     )
 
-    if member:
+
+# =========================
+# START
+# =========================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    args = context.args
+
+    # Deep Link
+    if args:
+
+        prompt_id = args[0].lower().strip()
+
+        if prompt_id in PROMPTS:
+            await send_prompt(
+                update,
+                context,
+                prompt_id
+            )
+            return
 
         await update.message.reply_text(
-            "👋 سلام! خوش اومدی 🌟\n\n"
-            "از منوی ربات می‌تونی به امکانات مختلف دسترسی داشته باشی.\n\n"
-            "🎁 اگر قبلاً پرامپتی دریافت کردی، "
-            "می‌تونی از گزینه «دریافت مجدد پرامپت» "
-            "دوباره دریافتش کنی."
+            "❌ این پرامپت وجود ندارد یا لینک آن اشتباه است."
         )
 
         return
 
+    # Normal /start
     keyboard = [
         [
             InlineKeyboardButton(
-                "🔵 عضویت در کانال",
-                url="https://t.me/HooshMasnoei_Tools"
+                "🎁 دریافت پرامپت",
+                callback_data="last"
             )
         ],
         [
             InlineKeyboardButton(
-                "✅ بررسی عضویت",
-                callback_data="check:last"
+                "ℹ️ راهنما",
+                callback_data="help"
             )
         ]
     ]
 
     await update.message.reply_text(
-        "👋 سلام! خوش اومدی 🌟\n\n"
-        "🔐 برای استفاده از ربات ابتدا باید عضو کانال ما باشی:\n\n"
-        "🔵 @HooshMasnoei_Tools",
+        "🤖 سلام!\n\n"
+        "به ربات دریافت پرامپت‌های کانال هوش مصنوعی خوش آمدید. 🔵\n\n"
+        "برای دریافت آخرین پرامپت از دکمه زیر استفاده کنید.",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
-# =========================================================
-# CHECK MEMBERSHIP
-# =========================================================
+# =========================
+# PROMPT COMMAND
+# =========================
 
-async def check_membership(
+async def prompt_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    user_id = update.effective_user.id
+
+    prompt_id = LAST_PROMPT.get(user_id)
+
+    if not prompt_id:
+        await update.message.reply_text(
+            "❌ هنوز پرامپتی برای شما ثبت نشده است."
+        )
+        return
+
+    await send_prompt(
+        update,
+        context,
+        prompt_id
+    )
+
+
+# =========================
+# HELP
+# =========================
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    await update.message.reply_text(
+        "ℹ️ راهنمای ربات\n\n"
+        "🎁 برای دریافت پرامپت، روی لینک دریافت آن در پست کانال بزنید.\n\n"
+        "🔒 برای دریافت پرامپت باید عضو کانال باشید.\n\n"
+        "/start - شروع ربات\n"
+        "/prompt - دریافت مجدد آخرین پرامپت\n"
+        "/help - راهنما"
+    )
+
+
+# =========================
+# CALLBACKS
+# =========================
+
+async def button_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
@@ -283,161 +393,132 @@ async def check_membership(
     await query.answer()
 
     user_id = query.from_user.id
+
     data = query.data
 
-    prompt_id = data.split(":", 1)[1]
+    # Check membership
+    if data.startswith("check:"):
 
-    if prompt_id == "last":
+        prompt_id = data.split(":", 1)[1]
 
-        prompt_id = LAST_PROMPT.get(user_id)
+        if prompt_id == "last":
+            prompt_id = LAST_PROMPT.get(user_id)
 
-        if not prompt_id:
+        if not prompt_id or prompt_id not in PROMPTS:
 
-            await query.message.reply_text(
-                "ℹ️ هنوز پرامپتی برای این کاربر ثبت نشده است.\n\n"
-                "برای دریافت یک پرامپت، از یکی از پست‌های "
-                "کانال وارد ربات شو."
+            await query.edit_message_text(
+                "❌ این پرامپت وجود ندارد یا لینک آن اشتباه است."
             )
 
             return
 
-    # اطمینان از وجود پرامپت
-    prompt_data = get_prompt(prompt_id)
+        if await is_user_member(user_id):
 
-    if not prompt_data:
+            LAST_PROMPT[user_id] = prompt_id
 
-        await query.answer(
-            "❌ این پرامپت دیگر وجود ندارد.",
-            show_alert=True
-        )
+            await query.edit_message_text(
+                "✅ عضویت شما تأیید شد!\n\n"
+                "🎁 پرامپت کامل:\n\n"
+                + PROMPTS[prompt_id].strip()
+            )
 
-        return
+        else:
 
-    member = await is_user_member(
-        context,
-        user_id
-    )
-
-    if not member:
-
-        await query.answer(
-            "❌ هنوز عضو کانال نیستی!",
-            show_alert=True
-        )
-
-        return
-
-    LAST_PROMPT[user_id] = prompt_id
-
-    await send_prompt(
-        query.message,
-        prompt_id
-    )
-
-
-# =========================================================
-# REPEAT PROMPT
-# =========================================================
-
-async def repeat_prompt(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if not update.message:
-        return
-
-    user_id = update.effective_user.id
-
-    member = await is_user_member(
-        context,
-        user_id
-    )
-
-    if not member:
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "🔵 عضویت در کانال",
-                    url="https://t.me/HooshMasnoei_Tools"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "✅ بررسی عضویت",
-                    callback_data="check:last"
-                )
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "🔵 عضویت در کانال",
+                        url="https://t.me/HooshMasnoei_Tools"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "✅ بررسی عضویت",
+                        callback_data=f"check:{prompt_id}"
+                    )
+                ]
             ]
-        ]
 
-        await update.message.reply_text(
-            "🔐 برای استفاده از این قابلیت ابتدا عضو کانال شو.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "❌ هنوز عضو کانال نیستید.\n\n"
+                "ابتدا عضو شوید و سپس دوباره روی «بررسی عضویت» بزنید.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        return
+
+    # Last prompt
+    if data == "last":
+
+        prompt_id = LAST_PROMPT.get(user_id)
+
+        if not prompt_id or prompt_id not in PROMPTS:
+
+            await query.edit_message_text(
+                "❌ هنوز پرامپتی برای شما ثبت نشده است."
+            )
+
+            return
+
+        if not await is_user_member(user_id):
+
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "🔵 عضویت در کانال",
+                        url="https://t.me/HooshMasnoei_Tools"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "✅ بررسی عضویت",
+                        callback_data=f"check:last"
+                    )
+                ]
+            ]
+
+            await query.edit_message_text(
+                "🔒 ابتدا باید عضو کانال شوید.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+            return
+
+        await query.edit_message_text(
+            "🎁 پرامپت کامل:\n\n"
+            + PROMPTS[prompt_id].strip()
         )
 
         return
 
-    prompt_id = LAST_PROMPT.get(user_id)
+    # Help
+    if data == "help":
 
-    if not prompt_id:
-
-        await update.message.reply_text(
-            "ℹ️ هنوز پرامپتی دریافت نکردی.\n\n"
-            "از یکی از پست‌های کانال روی "
-            "«🎁 دریافت پرامپت» بزن."
+        await query.edit_message_text(
+            "ℹ️ راهنمای ربات\n\n"
+            "🎁 برای دریافت پرامپت، روی لینک آن در پست کانال بزنید.\n\n"
+            "🔒 برای دریافت پرامپت باید عضو کانال باشید.\n\n"
+            "/start - شروع ربات\n"
+            "/prompt - دریافت مجدد آخرین پرامپت\n"
+            "/help - راهنما"
         )
 
-        return
 
-    await send_prompt(
-        update.message,
-        prompt_id
-    )
+# =========================
+# BOT SETUP
+# =========================
 
-
-# =========================================================
-# HELP
-# =========================================================
-
-async def help_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if not update.message:
-        return
-
-    await update.message.reply_text(
-        "ℹ️ راهنمای ربات\n\n"
-        "🎁 برای دریافت پرامپت، از پست‌های کانال "
-        "روی «دریافت پرامپت» بزن.\n\n"
-        "🔄 اگر قبلاً پرامپتی دریافت کرده‌ای، "
-        "از گزینه «دریافت مجدد پرامپت» استفاده کن.\n\n"
-        "🤖 @HooshMasnoeiPromptBot"
-    )
-
-
-# =========================================================
-# COMMANDS
-# =========================================================
-
-async def post_init(application):
+async def post_init(application: Application):
 
     await application.bot.set_my_commands([
-        BotCommand("start", "🏠 شروع"),
-        BotCommand("prompt", "🎁 دریافت مجدد پرامپت"),
-        BotCommand("help", "ℹ️ راهنما")
+        ("start", "🏠 شروع"),
+        ("prompt", "🎁 دریافت مجدد پرامپت"),
+        ("help", "ℹ️ راهنما"),
     ])
 
 
-# =========================================================
-# TELEGRAM APPLICATION
-# =========================================================
-
 bot_app = (
-    Application
-    .builder()
+    Application.builder()
     .token(BOT_TOKEN)
     .post_init(post_init)
     .build()
@@ -448,7 +529,7 @@ bot_app.add_handler(
 )
 
 bot_app.add_handler(
-    CommandHandler("prompt", repeat_prompt)
+    CommandHandler("prompt", prompt_command)
 )
 
 bot_app.add_handler(
@@ -456,156 +537,59 @@ bot_app.add_handler(
 )
 
 bot_app.add_handler(
-    CallbackQueryHandler(
-        check_membership,
-        pattern=r"^check:"
-    )
+    CallbackQueryHandler(button_callback)
 )
 
 
-# =========================================================
-# ASYNCIO LOOP
-# =========================================================
+# =========================
+# TELEGRAM WORKER
+# =========================
 
-async_loop = None
-bot_ready = False
-
-
-async def telegram_worker():
-
-    global async_loop
-    global bot_ready
-
-    async_loop = asyncio.get_running_loop()
-
-    print("Telegram application initializing...")
-
-    await bot_app.initialize()
-
-    await bot_app.start()
-
-    webhook_url = (
-        RENDER_EXTERNAL_URL.rstrip("/")
-        + WEBHOOK_PATH
-    )
-
-    print(
-        f"Setting webhook: {webhook_url}"
-    )
-
-    await bot_app.bot.set_webhook(
-        url=webhook_url,
-        drop_pending_updates=True
-    )
-
-    print(
-        "Webhook successfully configured."
-    )
-
-    print(
-        "Telegram application is running."
-    )
-
-    bot_ready = True
-
-    # Keep asyncio loop alive forever
-    await asyncio.Event().wait()
+loop = asyncio.new_event_loop()
 
 
-def start_telegram():
+def telegram_worker():
 
-    asyncio.run(
-        telegram_worker()
-    )
+    asyncio.set_event_loop(loop)
 
+    async def runner():
 
-# =========================================================
-# WEBHOOK
-# =========================================================
+        await bot_app.initialize()
+        await bot_app.start()
 
-@app_web.route(
-    WEBHOOK_PATH,
-    methods=["POST"]
-)
-def telegram_webhook():
-
-    try:
-
-        update_data = request.get_json(
-            force=True
+        webhook_url = (
+            RENDER_EXTERNAL_URL
+            + WEBHOOK_PATH
         )
 
-        if not update_data:
-            return "No update", 400
-
-        if not bot_ready or async_loop is None:
-
-            print(
-                "ERROR: Bot is not ready yet."
-            )
-
-            return "Bot not ready", 503
-
-        update = Update.de_json(
-            update_data,
-            bot_app.bot
+        await bot_app.bot.set_webhook(
+            url=webhook_url
         )
 
         print(
-            "Telegram update received."
+            "Webhook set:",
+            webhook_url
         )
 
-        future = (
-            asyncio.run_coroutine_threadsafe(
-                bot_app.process_update(update),
-                async_loop
-            )
-        )
+        await asyncio.Event().wait()
 
-        try:
-
-            future.result(
-                timeout=15
-            )
-
-        except Exception as e:
-
-            print(
-                f"Error while processing update: {e}"
-            )
-
-        return "OK", 200
-
-    except Exception as e:
-
-        print(
-            f"Webhook error: {e}"
-        )
-
-        return "ERROR", 500
+    loop.run_until_complete(runner())
 
 
-# =========================================================
-# START EVERYTHING
-# =========================================================
+# =========================
+# START
+# =========================
 
 if __name__ == "__main__":
 
-    print(
-        "Starting Telegram bot..."
-    )
-
-    telegram_thread = threading.Thread(
-        target=start_telegram,
+    worker_thread = threading.Thread(
+        target=telegram_worker,
         daemon=True
     )
 
-    telegram_thread.start()
+    worker_thread.start()
 
-    # کمی صبر می‌کنیم تا بات آماده شود
-    time.sleep(2)
-
-    app_web.run(
+    app.run(
         host="0.0.0.0",
         port=PORT
     )
