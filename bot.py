@@ -46,19 +46,6 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # PROMPTS
 # ============================================================
-#
-# Every prompt has its own unique ID.
-#
-# Channel button:
-#
-# https://t.me/HooshMasnoeiPromptBot?start=ID
-#
-# Example:
-#
-# https://t.me/HooshMasnoeiPromptBot?start=product
-#
-# ============================================================
-
 
 PROMPTS = {
 
@@ -820,22 +807,105 @@ LAST_PROMPT = None
 
 
 # ============================================================
-# PROMPT FORMATTER
+# SPLIT LONG TELEGRAM MESSAGES
 # ============================================================
 
-def format_prompt(prompt_id: str) -> str:
+# Telegram sendMessage allows up to 4096 characters.
+# We stay below the limit to leave room for formatting.
+MAX_MESSAGE_LENGTH = 3800
+
+
+def split_text(text: str, max_length: int = MAX_MESSAGE_LENGTH):
     """
-    Format a prompt inside a Telegram Markdown code block.
+    Split a long prompt into safe Telegram message sizes.
+
+    The function tries to split at paragraph boundaries first,
+    then at newline boundaries, and finally at character level
+    if a single section is still too long.
+    """
+
+    if len(text) <= max_length:
+        return [text]
+
+    chunks = []
+    remaining = text.strip()
+
+    while len(remaining) > max_length:
+
+        candidate = remaining[:max_length]
+
+        # Prefer splitting at a paragraph
+        split_at = candidate.rfind("\n\n")
+
+        # Otherwise split at a normal newline
+        if split_at < max_length * 0.5:
+            split_at = candidate.rfind("\n")
+
+        # Otherwise split at a space
+        if split_at < max_length * 0.5:
+            split_at = candidate.rfind(" ")
+
+        # Absolute fallback
+        if split_at <= 0:
+            split_at = max_length
+
+        chunk = remaining[:split_at].rstrip()
+
+        chunks.append(chunk)
+
+        remaining = remaining[split_at:].lstrip()
+
+    if remaining:
+        chunks.append(remaining)
+
+    return chunks
+
+
+# ============================================================
+# SEND PROMPT
+# ============================================================
+
+async def send_prompt(
+    message,
+    prompt_id: str,
+):
+    """
+    Send a prompt in one or multiple Telegram messages.
     """
 
     prompt = PROMPTS[prompt_id].strip()
 
-    return (
-        "🎁 *پرامپت کامل شما:*\n\n"
-        "```\n"
-        + prompt
-        + "\n```"
-    )
+    chunks = split_text(prompt)
+
+    total = len(chunks)
+
+    for index, chunk in enumerate(chunks, start=1):
+
+        if total == 1:
+
+            header = "🎁 *پرامپت کامل شما:*\n\n"
+
+        else:
+
+            header = (
+                f"🎁 *پرامپت کامل شما — بخش {index} از {total}:*\n\n"
+            )
+
+        text = (
+            header
+            + "```\n"
+            + chunk
+            + "\n```"
+        )
+
+        await message.reply_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+        # Small delay between long messages
+        if index < total:
+            await asyncio.sleep(0.25)
 
 
 # ============================================================
@@ -844,7 +914,7 @@ def format_prompt(prompt_id: str) -> str:
 
 async def is_user_member(
     user_id: int,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ) -> bool:
 
     try:
@@ -864,17 +934,17 @@ async def is_user_member(
 
         logger.warning(
             "Membership check failed: %s",
-            e
+            e,
         )
 
         return False
 
 
 # ============================================================
-# CHANNEL JOIN MESSAGE
+# CHANNEL JOIN KEYBOARD
 # ============================================================
 
-def channel_join_keyboard() -> InlineKeyboardMarkup:
+def channel_join_keyboard():
 
     keyboard = [
         [
@@ -935,11 +1005,11 @@ async def start_command(
     if not user:
         return
 
-    # --------------------------------------------------------
-    # Determine requested prompt
-    # --------------------------------------------------------
-
     prompt_id = None
+
+    # --------------------------------------------------------
+    # Deep-link ID
+    # --------------------------------------------------------
 
     if context.args:
 
@@ -950,7 +1020,7 @@ async def start_command(
             prompt_id = requested_id
 
     # --------------------------------------------------------
-    # If valid prompt was requested, remember it
+    # Remember requested prompt
     # --------------------------------------------------------
 
     if prompt_id:
@@ -958,7 +1028,7 @@ async def start_command(
         LAST_PROMPT = prompt_id
 
     # --------------------------------------------------------
-    # Membership check
+    # Membership
     # --------------------------------------------------------
 
     if not await is_user_member(
@@ -974,14 +1044,14 @@ async def start_command(
         return
 
     # --------------------------------------------------------
-    # Valid prompt
+    # Send requested prompt
     # --------------------------------------------------------
 
     if prompt_id:
 
-        await update.effective_message.reply_text(
-            format_prompt(prompt_id),
-            parse_mode=ParseMode.MARKDOWN,
+        await send_prompt(
+            update.effective_message,
+            prompt_id,
         )
 
         return
@@ -993,8 +1063,6 @@ async def start_command(
     text = (
         "🤖 *سلام! به ربات پرامپت هوش مصنوعی خوش اومدی.*\n\n"
         "📌 برای دریافت پرامپت، از لینک اختصاصی هر پست وارد ربات شو.\n\n"
-        "مثال:\n"
-        "`https://t.me/HooshMasnoeiPromptBot?start=product`\n\n"
         "✨ پرامپت‌های آماده و حرفه‌ای برای تولید و ویرایش تصویر."
     )
 
@@ -1037,7 +1105,7 @@ async def prompt_command(
         return
 
     # --------------------------------------------------------
-    # Requested ID
+    # Prompt ID
     # --------------------------------------------------------
 
     if not context.args:
@@ -1053,7 +1121,7 @@ async def prompt_command(
     prompt_id = context.args[0].strip().lower()
 
     # --------------------------------------------------------
-    # Check ID
+    # Validate
     # --------------------------------------------------------
 
     if prompt_id not in PROMPTS:
@@ -1071,12 +1139,12 @@ async def prompt_command(
     LAST_PROMPT = prompt_id
 
     # --------------------------------------------------------
-    # Send prompt
+    # Send
     # --------------------------------------------------------
 
-    await update.effective_message.reply_text(
-        format_prompt(prompt_id),
-        parse_mode=ParseMode.MARKDOWN,
+    await send_prompt(
+        update.effective_message,
+        prompt_id,
     )
 
 
@@ -1092,9 +1160,8 @@ async def help_command(
     text = (
         "ℹ️ *راهنمای ربات*\n\n"
         "📌 هر پست کانال یک شناسه اختصاصی دارد.\n\n"
-        "برای مثال:\n"
+        "مثال:\n"
         "`/prompt product`\n\n"
-        "یا از لینک مستقیم همان پست وارد ربات شوید.\n\n"
         "🛍️ product — تبلیغ حرفه‌ای محصول\n"
         "🎬 cinematic — پرتره سینمایی\n"
         "🪄 object_remove — حذف اشیا و افراد\n"
@@ -1128,7 +1195,7 @@ async def callback_handler(
     user = query.from_user
 
     # --------------------------------------------------------
-    # Membership check
+    # Membership
     # --------------------------------------------------------
 
     if not await is_user_member(
@@ -1151,7 +1218,7 @@ async def callback_handler(
     data = query.data or ""
 
     # --------------------------------------------------------
-    # Check specific prompt
+    # Check prompt
     # --------------------------------------------------------
 
     if data.startswith("check:"):
@@ -1180,9 +1247,9 @@ async def callback_handler(
 
         LAST_PROMPT = prompt_id
 
-        await query.message.reply_text(
-            format_prompt(prompt_id),
-            parse_mode=ParseMode.MARKDOWN,
+        await send_prompt(
+            query.message,
+            prompt_id,
         )
 
         return
@@ -1214,9 +1281,9 @@ async def callback_handler(
 
             return
 
-        await query.message.reply_text(
-            format_prompt(LAST_PROMPT),
-            parse_mode=ParseMode.MARKDOWN,
+        await send_prompt(
+            query.message,
+            LAST_PROMPT,
         )
 
         return
@@ -1372,10 +1439,6 @@ async def initialize_bot():
 
     await telegram_application.start()
 
-    # --------------------------------------------------------
-    # Set webhook
-    # --------------------------------------------------------
-
     if RENDER_EXTERNAL_URL:
 
         webhook_url = (
@@ -1395,8 +1458,7 @@ async def initialize_bot():
     else:
 
         logger.warning(
-            "RENDER_EXTERNAL_URL is not set. "
-            "Webhook was not configured."
+            "RENDER_EXTERNAL_URL is not set."
         )
 
 
